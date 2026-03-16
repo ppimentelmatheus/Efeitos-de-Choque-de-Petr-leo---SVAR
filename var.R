@@ -1,3 +1,6 @@
+#######################################################################
+################ VAR 
+
 # Pacotes -----------------------------------------------------------------
 
 library(vars)
@@ -13,9 +16,17 @@ library(GetBCBData)
 library(dynlm)
 library(purrr)
 
-
-
 # Dados -------------------------------------------------------------------
+
+
+# Ler dados diretamente ---------------------------------------------------
+
+raw_oil <- readr::read_rds("data/raw_data.rds")
+
+raw_fred = raw_oil[["raw_fred"]]
+
+
+# Coleta ------------------------------------------------------------------
 
 # Price Brent
 tickers_fred = c("DCOILBRENTEU") 
@@ -106,7 +117,6 @@ df_ts = df_raw |>
   )
 
 # VAR ---------------------------------------------------------------------
-
 ## Estimando o VAR
 var_model <- vars::VAR(
   df_ts |> dplyr::select(d_oilprod, rea, rop),
@@ -155,6 +165,7 @@ cor(oil_shocks)
 
 # Coleta de dados
 
+raw_dados_bcb = raw_oil[["raw_dados_bcb"]]
 
 # Definir data inicial
 init_date <- lubridate::as_date("2002-01-01")
@@ -209,7 +220,6 @@ dataset <- dados_bcb |>
 
 ####### Estimar impulse responses
 
-
 # Criar defasagens
 dataset_lags <- dataset |>
   mutate(
@@ -253,14 +263,12 @@ irf_supply <- cumsum(coef_supply)
 irf_demand <- cumsum(coef_demand)
 irf_spec   <- cumsum(coef_spec)
 
-plot(irf_supply, type="l")
-plot(irf_demand, type="l")
-plot(irf_spec, type="l")
+plot(irf_supply, type="l") # Impacto do aumento de oferta
+plot(irf_demand, type="l") 
+plot(irf_spec, type="l")   
 
 
 # Inflação
-
-
 model_pi <- lm(
   ipca ~
     oil_supply_lag1 + oil_supply_lag2 + oil_supply_lag3 +
@@ -280,17 +288,166 @@ model_pi <- lm(
 
 # IRF Cumulativa
 
+# Coletar coeficientes
 coef_supply <- coef(model_pi)[grep("oil_supply", names(coef(model_pi)))]
 coef_demand <- coef(model_pi)[grep("oil_demand", names(coef(model_pi)))]
 coef_spec   <- coef(model_pi)[grep("oil_spec_demand", names(coef(model_pi)))]
 
-irf_supply <- cumsum(coef_supply)
-irf_demand <- cumsum(coef_demand)
-irf_spec   <- cumsum(coef_spec)
+
+irf_supply <- c(0, irf_supply)
+irf_demand <- c(0, irf_demand)
+irf_spec <- c(0, irf_spec)
 
 plot(irf_supply, type="l")
 plot(irf_demand, type="l")
 plot(irf_spec, type="l")
 
-    
+irf_df <- tibble(
+  horizon = 0:(length(irf_supply)-1),
+  supply = irf_supply,
+  demand = irf_demand,
+  spec = irf_spec
+) |>
+  pivot_longer(
+    -horizon,
+    names_to = "shock",
+    values_to = "irf"
+  )
 
+irf_df$shock <- recode(
+  irf_df$shock,
+  supply = "Oil Supply Shock",
+  demand = "Global Demand Shock",
+  spec   = "Oil-Specific Demand Shock"
+)
+
+ggplot(irf_df, aes(x = horizon, y = irf)) +
+  geom_line(linewidth = 1.2, color = "steelblue") +
+  facet_wrap(~shock, ncol = 3) +
+  labs(
+    x = "Meses",
+    y = "Resposta acumulada da inflação",
+    title = "Impacto dos choques do petróleo sobre a inflação"
+  ) +
+  theme_minimal(base_size = 14)+
+  geom_hline(yintercept = 0, linetype = "dashed")
+
+
+# Construir intervalos de confiança ---------------------------------------
+
+coefs <- summary(model_y)$coefficients
+
+supply_rows <- grep("oil_supply", rownames(coefs))
+demand_rows <- grep("oil_demand_lag", rownames(coefs))
+spec_rows   <- grep("oil_spec_demand", rownames(coefs))
+
+coef_supply <- coefs[supply_rows, "Estimate"]
+se_supply   <- coefs[supply_rows, "Std. Error"]
+
+coef_demand <- coefs[demand_rows, "Estimate"]
+se_demand   <- coefs[demand_rows, "Std. Error"]
+
+coef_spec <- coefs[spec_rows, "Estimate"]
+se_spec   <- coefs[spec_rows, "Std. Error"]
+
+
+irf_supply <- cumsum(coef_supply)
+irf_demand <- cumsum(coef_demand)
+irf_spec   <- cumsum(coef_spec)
+
+irf_supply <- c(irf_supply)
+irf_demand <- c(irf_demand)
+irf_spec <- c(irf_spec)
+
+ci_supply <- 1.96 * sqrt(cumsum(se_supply^2))
+ci_demand <- 1.96 * sqrt(cumsum(se_demand^2))
+ci_spec   <- 1.96 * sqrt(cumsum(se_spec^2))
+
+lower_supply <- irf_supply - ci_supply
+upper_supply <- irf_supply + ci_supply
+
+lower_demand <- irf_demand - ci_demand
+upper_demand <- irf_demand + ci_demand
+
+lower_spec <- irf_spec - ci_spec
+upper_spec <- irf_spec + ci_spec
+
+irf_df <- tibble(
+  horizon = 1:length(irf_supply),
+  
+  supply = irf_supply,
+  lower_supply = lower_supply,
+  upper_supply = upper_supply,
+  
+  demand = irf_demand,
+  lower_demand = lower_demand,
+  upper_demand = upper_demand,
+  
+  spec = irf_spec,
+  lower_spec = lower_spec,
+  upper_spec = upper_spec
+)
+
+# Transformar para formato longo
+irf_long <- bind_rows(
+  tibble(
+    horizon = irf_df$horizon,
+    irf = irf_df$supply,
+    lower = irf_df$lower_supply,
+    upper = irf_df$upper_supply,
+    shock = "Oil Supply Shock"
+  ),
+  tibble(
+    horizon = irf_df$horizon,
+    irf = irf_df$demand,
+    lower = irf_df$lower_demand,
+    upper = irf_df$upper_demand,
+    shock = "Global Demand Shock"
+  ),
+  tibble(
+    horizon = irf_df$horizon,
+    irf = irf_df$spec,
+    lower = irf_df$lower_spec,
+    upper = irf_df$upper_spec,
+    shock = "Oil-Specific Demand Shock"
+  )
+)
+
+# Incluir zeros
+irf_long <- bind_rows(
+  tibble(
+    horizon = 0,
+    irf = 0,
+    lower = 0,
+    upper = 0,
+    shock = unique(irf_long$shock)
+  ),
+  irf_long
+)
+# Ordenar
+irf_long <- irf_long |>
+  arrange(shock, horizon)
+
+ggplot(irf_long, aes(horizon, irf)) +
+  geom_ribbon(aes(ymin = lower, ymax = upper),
+              fill = "steelblue",
+              alpha = 0.2) +
+  geom_line(size = 1.2, color = "steelblue") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  facet_wrap(~shock, ncol = 3) +
+  labs(
+    x = "Meses",
+    y = "Resposta acumulada da inflação",
+    title = "Impacto dos choques do petróleo sobre a inflação Brasileira",
+    caption = "Elaboração: Matheus Porto Pimentel,
+    Dados: EIA, FRED, FED Dallas e BCB"
+  ) +
+  theme_minimal(base_size = 14)
+
+
+### Magnitude dos choaque
+
+sd(oil_shocks$oil_supply)
+sd(oil_shocks$oil_demand)
+sd(oil_shocks$oil_spec_demand)
+B
