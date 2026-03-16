@@ -21,7 +21,7 @@ choque de demanda global
 choque de demanda específica do mercado de petróleo
 
 - Segunda etapa:
-- 
+
 Os choques identificados são usados em regressões para estimar impulse responses cumulativas sobre:
 
 atividade econômica
