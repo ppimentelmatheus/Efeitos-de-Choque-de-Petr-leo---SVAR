@@ -15,6 +15,7 @@ library(tsibble)
 library(GetBCBData)
 library(dynlm)
 library(purrr)
+library(writexl)
 
 # Dados -------------------------------------------------------------------
 
@@ -88,7 +89,7 @@ activity <- readxl::read_excel(
 
 ggplot2::ggplot(activity, aes(x=as.Date(date), y=global_activity))+
   geom_line()
-                  
+
 # Juntar dados
 
 df_raw = purrr::reduce(
@@ -96,6 +97,9 @@ df_raw = purrr::reduce(
   .f = full_join,
   by = 'date'
 ) |> drop_na() |> filter(date >= tsibble::yearmonth("2003 Jan"))
+
+# Exportar dados para Excel
+#writexl::write_xlsx(x=df_raw, "df_raw.xlsx")
 
 df = df_raw |> 
   dplyr::mutate(
@@ -160,6 +164,8 @@ head(oil_shocks)
 # Choques não correlacionados
 cor(oil_shocks)
 
+# Exportar dados de choques
+
 
 # Coletar dados BCB -------------------------------------------------------
 
@@ -191,7 +197,7 @@ dados_bcb <- raw_dados_bcb |>
     dplyr::across(
       c(ipca, ibc_br, selic, m2, reef),
       ~ mean(.x, na.rm = TRUE)
-  )) |> 
+    )) |> 
   ungroup() |> 
   # Retira a última linha de abril pois estava sem data
   dplyr::slice(-dplyr::n()) |> 
